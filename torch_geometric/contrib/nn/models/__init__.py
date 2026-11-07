@@ -1,3 +1,5 @@
+from .edge_injection import (BehavioralEdges, KNNEdges, TwoHopEdges,
+                             similar_edges)
 from .hard_concrete import HardConcreteGate
 from .mgnan import MGNAN
 from .rbcd_attack import PRBCDAttack, GRBCDAttack
@@ -9,4 +11,8 @@ __all__ = classes = [
     'GRBCDAttack',
     'HardConcreteGate',
     'RelationalFilter',
+    'KNNEdges',
+    'BehavioralEdges',
+    'TwoHopEdges',
+    'similar_edges',
 ]
