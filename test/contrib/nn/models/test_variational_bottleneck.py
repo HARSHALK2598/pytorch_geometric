@@ -22,7 +22,7 @@ def test_variational_bottleneck():
     expected = 0.0
     for node_type in ['users', 'items']:
         mu = vib.mu[node_type](x_dict[node_type])
-        logvar = vib.logvar[node_type](x_dict[node_type])
+        logvar = vib.logvar[node_type](x_dict[node_type]).clamp(-10, 10)
         per_node = 0.5 * (mu**2 + logvar.exp() - logvar - 1).sum(-1)
         expected = expected + per_node.mean()
     assert torch.allclose(kl, expected)
@@ -59,3 +59,9 @@ def test_variational_bottleneck_kl_is_zero_at_the_prior():
     assert kl.abs().item() < 1e-7
     _, kl = vib({'users': torch.randn(0, 8)})  # No nodes: no penalty.
     assert kl.item() == 0.0
+
+
+def test_variational_bottleneck_large_inputs_stay_finite():
+    vib = VariationalBottleneck(['results'], 4)
+    z, kl = vib({'results': torch.full((3, 4), 1.5e7)})
+    assert torch.isfinite(z['results']).all() and torch.isfinite(kl)

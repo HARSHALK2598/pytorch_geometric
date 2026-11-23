@@ -24,7 +24,8 @@ class VariationalBottleneck(torch.nn.Module):
 
     with :math:`\boldsymbol{z}_v = \boldsymbol{\mu}_T(\tilde{\mathbf{h}}_v)`
     in evaluation mode. :math:`\boldsymbol{\mu}_T` and
-    :math:`\log \boldsymbol{\sigma}^2_T` are linear maps per node type. The
+    :math:`\log \boldsymbol{\sigma}^2_T` are linear maps per node type;
+    :math:`\log \boldsymbol{\sigma}^2_T` is clamped to :math:`[-10, 10]`. The
     penalty is the KL divergence to the prior, averaged over the nodes of
     each type and summed over types:
 
@@ -94,7 +95,8 @@ class VariationalBottleneck(torch.nn.Module):
             if node_type not in self.mu:
                 continue
             mu = self.mu[node_type](x)
-            logvar = self.logvar[node_type](x)
+            # Clamped so that exp() cannot overflow on badly scaled inputs:
+            logvar = self.logvar[node_type](x).clamp(-10.0, 10.0)
             if self.training:
                 eps = torch.randn_like(mu)
                 out[node_type] = mu + (0.5 * logvar).exp() * eps
