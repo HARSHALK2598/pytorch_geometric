@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added the structural optimizer of "What Makes a Desired Graph for Relational Deep Learning?" to `torch_geometric.contrib`: `HardConcreteGate`, `RelationalFilter`, `VariationalBottleneck`, `KNNEdges`, `BehavioralEdges`, `TwoHopEdges`, `GatedHeteroConv`, `StructuralOptimizer` and the `TemporalContinuity` transform, plus an example on RelBench; fixed `contrib.utils.from_relbench` time units for pandas 3
 - Added `torch_geometric.contrib.nn.models.MGNAN` (M-GNAN, an extension of `GNAN` to multivariate shape functions) model plus an example ([#10371](https://github.com/pyg-team/pytorch_geometric/pull/10371))
 
 ### Changed
