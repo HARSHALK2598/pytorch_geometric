@@ -4,6 +4,7 @@ from .hard_concrete import HardConcreteGate
 from .mgnan import MGNAN
 from .rbcd_attack import PRBCDAttack, GRBCDAttack
 from .relational_filter import RelationalFilter
+from .variational_bottleneck import VariationalBottleneck
 
 __all__ = classes = [
     'MGNAN',
@@ -15,4 +16,5 @@ __all__ = classes = [
     'BehavioralEdges',
     'TwoHopEdges',
     'similar_edges',
+    'VariationalBottleneck',
 ]

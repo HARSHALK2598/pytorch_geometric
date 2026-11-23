@@ -96,3 +96,13 @@ def test_relational_filter_l0_penalties():
     filt = RelationalFilter({'users': 0}, table_types=[])
     column_penalty, table_penalty = filt.l0_penalties()
     assert float(column_penalty) == 0.0 and float(table_penalty) == 0.0
+
+
+def test_relational_filter_node_types_named_like_dict_methods():
+    # Node types such as 'items' clash with torch.nn.ModuleDict's methods:
+    filt = RelationalFilter({'items': 2, 'keys': 1}).eval()
+    x = torch.randn(3, 2, 4)
+    assert filt.gate_columns('items', x).size() == (3, 2, 4)
+    assert set(filt.gate_tables({'keys': torch.ones(3, 4)})) == {'keys'}
+    column_penalty, table_penalty = filt.l0_penalties()
+    assert column_penalty.numel() == 1 and table_penalty.numel() == 1

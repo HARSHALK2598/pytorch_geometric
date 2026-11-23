@@ -4,6 +4,7 @@ import torch
 from torch import Tensor
 
 from torch_geometric.contrib.nn.models.hard_concrete import HardConcreteGate
+from torch_geometric.nn.module_dict import ModuleDict
 from torch_geometric.typing import NodeType
 
 
@@ -71,14 +72,13 @@ class RelationalFilter(torch.nn.Module):
         self.table_types = list(table_types)
 
         # Node types without columns (`0`) get no column gates:
-        self.column_gates = torch.nn.ModuleDict({
+        self.column_gates = ModuleDict({
             node_type:
             HardConcreteGate(num, **kwargs)
             for node_type, num in self.num_columns.items() if num > 0
         })
-        self.table_gates = torch.nn.ModuleDict({
-            node_type:
-            HardConcreteGate(1, **kwargs)
+        self.table_gates = ModuleDict({
+            node_type: HardConcreteGate(1, **kwargs)
             for node_type in self.table_types
         })
 
@@ -137,7 +137,7 @@ class RelationalFilter(torch.nn.Module):
         :math:`\sum_T \sum_c \mathbb{E}\|g_{T,c}\|_0` and of open table gates
         :math:`\sum_T \mathbb{E}\|s_T\|_0`, as differentiable scalars.
         """
-        def total(gates: torch.nn.ModuleDict) -> Tensor:
+        def total(gates: ModuleDict) -> Tensor:
             if len(gates) == 0:
                 return torch.zeros(())
             return torch.stack([g.l0_penalty() for g in gates.values()]).sum()
