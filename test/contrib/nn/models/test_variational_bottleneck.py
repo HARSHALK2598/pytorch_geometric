@@ -65,3 +65,17 @@ def test_variational_bottleneck_large_inputs_stay_finite():
     vib = VariationalBottleneck(['results'], 4)
     z, kl = vib({'results': torch.full((3, 4), 1.5e7)})
     assert torch.isfinite(z['results']).all() and torch.isfinite(kl)
+
+
+def test_variational_bottleneck_starts_with_small_constant_noise():
+    torch.manual_seed(0)
+    vib = VariationalBottleneck(['users'], 8)
+    x = 10 * torch.randn(50, 8)  # Badly scaled inputs do not matter.
+    logvar = vib.logvar['users'](x)
+    assert torch.equal(logvar, torch.full_like(logvar, -2.0))
+    z, _ = vib({'users': x})
+    noise = z['users'] - vib.mu['users'](x)
+    assert abs(noise.std().item() - torch.e**-1) < 0.05
+
+    vib = VariationalBottleneck(['users'], 8, init_logvar=0.0)
+    assert torch.equal(vib.logvar['users'].bias, torch.zeros(8))
