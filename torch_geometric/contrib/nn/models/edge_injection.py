@@ -37,6 +37,7 @@ def similar_edges(
     threshold: Optional[float] = None,
     node_time: Optional[Tensor] = None,
     chunk_size: int = 2048,
+    group: Optional[Tensor] = None,
 ) -> Tensor:
     r"""Links every node :math:`v` to the :obj:`num_neighbors` nodes
     :math:`u \neq v` whose rows of :obj:`x` are most cosine-similar to its
@@ -44,7 +45,9 @@ def similar_edges(
 
     Only nodes that cannot leak the future are candidates: if
     :obj:`node_time` is given, :math:`u` is a candidate for :math:`v` only if
-    :math:`t_u \le t_v`. If :obj:`threshold` is given, only similarities
+    :math:`t_u \le t_v`. If :obj:`group` is given, :math:`u` is a candidate
+    for :math:`v` only if both are in the same group (*e.g.*, the same
+    sampled subgraph). If :obj:`threshold` is given, only similarities
     above it count (so a node may get fewer neighbors).
 
     Similarities are computed :obj:`chunk_size` target nodes at a time, so
@@ -60,6 +63,8 @@ def similar_edges(
             :obj:`[num_nodes]`. (default: :obj:`None`)
         chunk_size (int, optional): The number of target nodes per chunk.
             (default: :obj:`2048`)
+        group (torch.Tensor, optional): The group of each node, of shape
+            :obj:`[num_nodes]`. (default: :obj:`None`)
 
     Returns:
         torch.Tensor: The edges of shape :obj:`[2, num_edges]` (sources in
@@ -80,6 +85,9 @@ def similar_edges(
         if node_time is not None:  # No source newer than its target:
             newer = node_time.view(1, -1) > node_time[start:end].view(-1, 1)
             sim.masked_fill_(newer, float('-inf'))
+        if group is not None:  # Only nodes of the same group:
+            other = group.view(1, -1) != group[start:end].view(-1, 1)
+            sim.masked_fill_(other, float('-inf'))
         if threshold is not None:
             sim.masked_fill_(sim <= threshold, float('-inf'))
         value, index = sim.topk(k, dim=1)
@@ -103,12 +111,14 @@ class KNNEdges(torch.nn.Module):
         \operatorname{Top-}n_{u' \in \mathcal{C}(v)} \cos\left(
         \mathbf{h}^{(0)}_{u'}, \mathbf{h}^{(0)}_v \right) \right\},
 
-    where the candidates :math:`\mathcal{C}(v)` exclude :math:`v` itself and,
-    with temporal sampling, every node from a subgraph whose seed is newer
-    than :math:`v`'s (:math:`t_s(u) > t_s(v)`), so that no information from
-    the future reaches :math:`v`. Each node *receives* from its :math:`n`
-    most similar candidates. The edges are returned under the edge type
-    :obj:`(node_type, 'knn', node_type)`, to be used as an extra relation,
+    where the candidates :math:`\mathcal{C}(v)` are the other nodes of
+    :math:`v`'s own sampled subgraph (as in the authors' code). With
+    :obj:`same_subgraph=False`, they are the nodes of every subgraph whose
+    seed is not newer than :math:`v`'s (:math:`t_s(u) \le t_s(v)`), so that
+    no information from the future reaches :math:`v` either way. Each node
+    *receives* from its :math:`n` most similar candidates. The edges are
+    returned under the edge type :obj:`(node_type, 'knn', node_type)`, to be
+    used as an extra relation,
     *e.g.*, in :class:`~torch_geometric.nn.conv.HeteroConv`.
 
     Args:
@@ -118,6 +128,10 @@ class KNNEdges(torch.nn.Module):
         chunk_size (int, optional): The number of nodes whose similarities
             are computed at once (see :func:`similar_edges`).
             (default: :obj:`2048`)
+        same_subgraph (bool, optional): If :obj:`True`, links only nodes of
+            the same subgraph; else also nodes of other subgraphs that are not
+            newer. Needs :obj:`batch_dict` in :meth:`forward`.
+            (default: :obj:`True`)
 
     Example:
         >>> knn = KNNEdges('drivers', k=5)
@@ -126,11 +140,12 @@ class KNNEdges(torch.nn.Module):
         >>> edge_index_dict[edge_type] = edge_index
     """
     def __init__(self, node_type: NodeType, k: int = 10,
-                 chunk_size: int = 2048):
+                 chunk_size: int = 2048, same_subgraph: bool = True):
         super().__init__()
         self.node_type = node_type
         self.k = k
         self.chunk_size = chunk_size
+        self.same_subgraph = same_subgraph
 
     @property
     def edge_type(self) -> EdgeType:
@@ -163,11 +178,13 @@ class KNNEdges(torch.nn.Module):
         batch = None if batch_dict is None else batch_dict.get(self.node_type)
         edge_index = similar_edges(x, self.k,
                                    node_time=node_seed_time(batch, seed_time),
-                                   chunk_size=self.chunk_size)
+                                   chunk_size=self.chunk_size,
+                                   group=batch if self.same_subgraph else None)
         return self.edge_type, edge_index
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}({self.node_type!r}, k={self.k})'
+        return (f'{self.__class__.__name__}({self.node_type!r}, k={self.k}, '
+                f'same_subgraph={self.same_subgraph})')
 
 
 class BehavioralEdges(torch.nn.Module):
@@ -187,7 +204,8 @@ class BehavioralEdges(torch.nn.Module):
         \mathbf{h}^{(0)}_w .
 
     Nodes without neighbors along :obj:`via` take no part. As in
-    :class:`KNNEdges`, candidates from newer subgraphs are excluded, and each
+    :class:`KNNEdges`, candidates come from the node's own subgraph (or, with
+    :obj:`same_subgraph=False`, from subgraphs that are not newer), and each
     node keeps at most :obj:`max_neighbors` incoming edges, from the most
     similar candidates. The edges are returned under the edge type
     :obj:`(node_type, 'behavioral__<src>__<rel>', node_type)`, with
@@ -203,6 +221,8 @@ class BehavioralEdges(torch.nn.Module):
             per node. (default: :obj:`10`)
         chunk_size (int, optional): See :func:`similar_edges`.
             (default: :obj:`2048`)
+        same_subgraph (bool, optional): See :class:`KNNEdges`.
+            (default: :obj:`True`)
 
     Example:
         >>> behavioral = BehavioralEdges(
@@ -218,6 +238,7 @@ class BehavioralEdges(torch.nn.Module):
         threshold: float = 0.9,
         max_neighbors: int = 10,
         chunk_size: int = 2048,
+        same_subgraph: bool = True,
     ):
         super().__init__()
         if via[-1] != node_type:
@@ -228,6 +249,7 @@ class BehavioralEdges(torch.nn.Module):
         self.threshold = threshold
         self.max_neighbors = max_neighbors
         self.chunk_size = chunk_size
+        self.same_subgraph = same_subgraph
 
     @property
     def edge_type(self) -> EdgeType:
@@ -276,7 +298,9 @@ class BehavioralEdges(torch.nn.Module):
         out = similar_edges(
             mean[active], self.max_neighbors, threshold=self.threshold,
             node_time=None if node_time is None else node_time[active],
-            chunk_size=self.chunk_size)
+            chunk_size=self.chunk_size,
+            group=(batch[active]
+                   if self.same_subgraph and batch is not None else None))
         return self.edge_type, active[out]
 
     def __repr__(self) -> str:

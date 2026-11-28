@@ -57,7 +57,7 @@ def test_similar_edges_no_future():
 
 def test_knn_edges():
     knn = KNNEdges('drivers', k=1)
-    assert str(knn) == "KNNEdges('drivers', k=1)"
+    assert str(knn) == "KNNEdges('drivers', k=1, same_subgraph=True)"
     assert knn.edge_type == ('drivers', 'knn', 'drivers')
 
     x_dict = {'drivers': X}
@@ -65,11 +65,17 @@ def test_knn_edges():
     assert edge_type == ('drivers', 'knn', 'drivers')
     assert edge_set(out) == {(1, 0), (0, 1), (1, 2), (2, 3)}
 
-    # Subgraphs 0 (time 5) and 1 (time 3), as in a temporal mini-batch:
+    # Subgraphs 0 (time 5) and 1 (time 3), as in a temporal mini-batch.
+    # Across subgraphs, no source from the newer subgraph 0 reaches 1:
     batch_dict = {'drivers': torch.tensor([0, 1, 1, 0])}
     seed_time = torch.tensor([5, 3])
+    knn.same_subgraph = False
     _, out = knn(x_dict, batch_dict, seed_time)
     assert edge_set(out) == {(1, 0), (2, 1), (1, 2), (2, 3)}
+    # Within subgraphs only, each driver links to its one subgraph partner:
+    knn.same_subgraph = True
+    _, out = knn(x_dict, batch_dict, seed_time)
+    assert edge_set(out) == {(3, 0), (2, 1), (1, 2), (0, 3)}
 
 
 def test_behavioral_edges():
@@ -94,11 +100,17 @@ def test_behavioral_edges():
     assert edge_type == behavioral.edge_type
     assert edge_set(out) == {(1, 0), (0, 1)}
 
-    # Driver 1 is from a newer subgraph, so it may not reach driver 0:
+    # Across subgraphs, driver 1 is from a newer subgraph, so it may not
+    # reach driver 0; within subgraphs, the two are never linked:
     batch_dict = {'drivers': torch.tensor([0, 1, 0, 0])}
+    behavioral.same_subgraph = False
     _, out = behavioral(x_dict, edge_index_dict, batch_dict,
                         torch.tensor([3, 7]))
     assert edge_set(out) == {(0, 1)}
+    behavioral.same_subgraph = True
+    _, out = behavioral(x_dict, edge_index_dict, batch_dict,
+                        torch.tensor([3, 7]))
+    assert edge_set(out) == set()
 
     # Without edges along 'via', no edges:
     _, out = behavioral(x_dict, {})
@@ -204,16 +216,16 @@ def test_injection_never_reaches_newer_subgraphs():
         return bool((t_src <= t_dst).all())
 
     for node_type in ['drivers', 'results']:
-        edge_type, out = KNNEdges(node_type, k=5)(x_dict, batch.batch_dict,
-                                                  seed_time)
+        # Across subgraphs (the stricter case for the time rule):
+        knn = KNNEdges(node_type, k=5, same_subgraph=False)
+        edge_type, out = knn(x_dict, batch.batch_dict, seed_time)
         assert out.size(1) > 0 and allowed(edge_type, out)
 
     via = ('results', 'f2p_driverId', 'drivers')
-    edge_type, out = BehavioralEdges('drivers', via,
-                                     threshold=-1.0)(x_dict,
-                                                     batch.edge_index_dict,
-                                                     batch.batch_dict,
-                                                     seed_time)
+    behavioral = BehavioralEdges('drivers', via, threshold=-1.0,
+                                 same_subgraph=False)
+    edge_type, out = behavioral(x_dict, batch.edge_index_dict,
+                                batch.batch_dict, seed_time)
     assert out.size(1) > 0 and allowed(edge_type, out)
 
     # Two-hop shortcuts stay inside one subgraph:
@@ -221,3 +233,31 @@ def test_injection_never_reaches_newer_subgraphs():
         edge_type, out = two_hop(batch.edge_index_dict, batch.num_nodes_dict)
         src, _, dst = edge_type
         assert torch.equal(batch[src].batch[out[0]], batch[dst].batch[out[1]])
+
+
+def test_knn_and_behavioral_edges_stay_in_their_subgraph():
+    torch.manual_seed(0)
+    x_dict = {'users': torch.randn(8, 4), 'items': torch.randn(6, 4)}
+    batch_dict = {
+        'users': torch.tensor([0, 0, 0, 0, 1, 1, 1, 1]),
+        'items': torch.tensor([0, 0, 0, 1, 1, 1])
+    }
+    seed_time = torch.tensor([5, 5])  # Same time: only the group separates.
+    via = ('items', 'to', 'users')
+    edge_index_dict = {
+        via: torch.tensor([[0, 1, 2, 3, 4, 5, 0, 3], [0, 1, 2, 4, 5, 6, 3, 7]])
+    }
+    for same in [True, False]:
+        knn = KNNEdges('users', k=5, same_subgraph=same)
+        _, ei = knn(x_dict, batch_dict, seed_time)
+        b = batch_dict['users']
+        crossing = (b[ei[0]] != b[ei[1]]).sum().item()
+        assert (crossing == 0) == same
+        behavioral = BehavioralEdges('users', via, threshold=-1.0,
+                                     max_neighbors=5, same_subgraph=same)
+        _, ei = behavioral(x_dict, edge_index_dict, batch_dict, seed_time)
+        crossing = (b[ei[0]] != b[ei[1]]).sum().item()
+        assert (crossing == 0) == same
+    # Each user still gets its 3 subgraph neighbours:
+    _, ei = KNNEdges('users', k=5)(x_dict, batch_dict, seed_time)
+    assert ei.size(1) == 8 * 3

@@ -25,7 +25,9 @@ class VariationalBottleneck(torch.nn.Module):
     with :math:`\boldsymbol{z}_v = \boldsymbol{\mu}_T(\tilde{\mathbf{h}}_v)`
     in evaluation mode. :math:`\boldsymbol{\mu}_T` and
     :math:`\log \boldsymbol{\sigma}^2_T` are linear maps per node type;
-    :math:`\log \boldsymbol{\sigma}^2_T` is clamped to :math:`[-10, 10]`. The
+    :math:`\log \boldsymbol{\sigma}^2_T` is clamped to :math:`[-10, 10]` and
+    starts as the constant :obj:`init_logvar` (zero weights), so the noise
+    starts small and the same for every node, as in the authors' code. The
     penalty is the KL divergence to the prior, averaged over the nodes of
     each type and summed over types:
 
@@ -42,6 +44,10 @@ class VariationalBottleneck(torch.nn.Module):
         in_channels (int): Size of each input embedding.
         out_channels (int, optional): Size of each latent. If :obj:`None`,
             equal to :obj:`in_channels`. (default: :obj:`None`)
+        init_logvar (float, optional): The initial
+            :math:`\log \boldsymbol{\sigma}^2` of every node; the default
+            gives a noise standard deviation of :math:`e^{-1} \approx 0.37`.
+            (default: :obj:`-2.0`)
 
     Example:
         >>> vib = VariationalBottleneck(['users', 'items'], 64)
@@ -53,11 +59,13 @@ class VariationalBottleneck(torch.nn.Module):
         node_types: List[NodeType],
         in_channels: int,
         out_channels: Optional[int] = None,
+        init_logvar: float = -2.0,
     ):
         super().__init__()
         out_channels = out_channels or in_channels
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.init_logvar = init_logvar
         self.mu = ModuleDict({
             node_type:
             torch.nn.Linear(in_channels, out_channels)
@@ -68,11 +76,15 @@ class VariationalBottleneck(torch.nn.Module):
             torch.nn.Linear(in_channels, out_channels)
             for node_type in node_types
         })
+        self.reset_parameters()
 
     def reset_parameters(self):
         r"""Resets all learnable parameters of the module."""
-        for lin in [*self.mu.values(), *self.logvar.values()]:
+        for lin in self.mu.values():
             lin.reset_parameters()
+        for lin in self.logvar.values():
+            torch.nn.init.zeros_(lin.weight)
+            torch.nn.init.constant_(lin.bias, self.init_logvar)
 
     def forward(
         self,
