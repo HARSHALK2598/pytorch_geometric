@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from torch_geometric.contrib.nn.models import (
@@ -5,9 +6,16 @@ from torch_geometric.contrib.nn.models import (
     StructuralOptimizer,
     TwoHopEdges,
 )
-from torch_geometric.nn import MLP, HeteroConv, LayerNorm, SAGEConv
+from torch_geometric.nn import (
+    MLP,
+    GATConv,
+    GraphConv,
+    HeteroConv,
+    LayerNorm,
+    SAGEConv,
+)
 from torch_geometric.nn.module_dict import ModuleDict
-from torch_geometric.testing import onlyOnline, withPackage
+from torch_geometric.testing import onlyOnline, withCUDA, withPackage
 
 NODE_TYPES = ['users', 'items', 'tags']
 EDGE_TYPES = [
@@ -144,6 +152,53 @@ def test_structural_optimizer_no_future_through_knn():
     out2 = model(x_dict, edge_index_dict, 'users', batch_dict, seed_time)
     assert torch.allclose(out[3:], out2[3:])  # The early one is unchanged.
     assert not torch.allclose(out[:3], out2[:3])
+
+
+def gat_conv(edge_type, channels, injected):
+    # Bipartite relations: no self-loops; injected ones without bias.
+    return GATConv((channels, channels), channels, add_self_loops=False,
+                   bias=not injected)
+
+
+def graph_conv(edge_type, channels, injected):
+    return GraphConv((channels, channels), channels, bias=not injected)
+
+
+@pytest.mark.parametrize('conv', [gat_conv, graph_conv])
+def test_structural_optimizer_other_convolutions(conv):
+    # The convolution is any MessagePassing layer for bipartite inputs:
+    x_dict, edge_index_dict = make_inputs()
+    model = full_model(conv=conv)
+    assert all(
+        isinstance(c, (GATConv, GraphConv)) for layer in model.convs
+        for c in layer.convs.values())
+    out = model(x_dict, edge_index_dict, 'users', num_targets=4)
+    assert out.size() == (4, 1)
+    (out.sum() + model.structural_loss()).backward()
+    assert model.gate.logit.grad.abs().sum() > 0
+    model.eval()
+    with torch.no_grad():
+        assert torch.equal(model(x_dict, edge_index_dict, 'users'),
+                           model(x_dict, edge_index_dict, 'users'))
+
+
+@withCUDA
+def test_structural_optimizer_device(device):
+    x_dict, edge_index_dict = make_inputs()
+    x_dict = {k: v.to(device) for k, v in x_dict.items()}
+    edge_index_dict = {k: v.to(device) for k, v in edge_index_dict.items()}
+    batch_dict = {
+        'users': torch.tensor([0, 0, 0, 1, 1, 1], device=device),
+        'items': torch.tensor([0, 0, 0, 1, 1], device=device),
+        'tags': torch.tensor([0, 1], device=device),
+    }
+    seed_time = torch.tensor([9, 1], device=device)
+    model = full_model().to(device)
+    out = model(x_dict, edge_index_dict, 'users', batch_dict, seed_time, 4)
+    loss = model.structural_loss()
+    assert out.device == device and loss.device == device
+    (out.sum() + loss).backward()
+    assert model.gate.logit.grad.device == device
 
 
 @onlyOnline

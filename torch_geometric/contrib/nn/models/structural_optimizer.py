@@ -99,7 +99,13 @@ class StructuralOptimizer(torch.nn.Module):
         beta_vib (float, optional): Weight :math:`\beta_\text{vib}`.
             (default: :obj:`0.0`)
         conv (callable, optional): Builds the convolution of a relation from
-            :obj:`(edge_type, channels, injected)`.
+            :obj:`(edge_type, channels, injected)`; any
+            :class:`~torch_geometric.nn.conv.MessagePassing` layer for
+            bipartite inputs works, *e.g.*,
+            :obj:`lambda et, c, injected: GATConv((c, c), c,
+            add_self_loops=False, bias=not injected)`. Injected relations
+            should carry the neighbor message only (no root weight or
+            bias), so that a closed template adds nothing.
             (default: :func:`default_conv`)
         gate_kwargs (Dict[str, Any], optional): Arguments of every
             :class:`~torch_geometric.contrib.nn.models.HardConcreteGate`.

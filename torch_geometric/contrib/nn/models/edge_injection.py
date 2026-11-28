@@ -69,6 +69,12 @@ def similar_edges(
     Returns:
         torch.Tensor: The edges of shape :obj:`[2, num_edges]` (sources in
         row 0, targets in row 1).
+
+    Example:
+        >>> x = torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]])
+        >>> similar_edges(x, num_neighbors=1)  # Node 2's best is node 1.
+        tensor([[1, 0, 1],
+                [0, 1, 2]])
     """
     num_nodes = x.size(0)
     k = min(num_neighbors, num_nodes - 1)
